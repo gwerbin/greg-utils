@@ -1,4 +1,10 @@
+import zlib
+
 from gensim.corpora import Dictionary, HashDictionary
+from sklearn.base import BaseEstimator, TransformerMixin
+import scipy.sparse as sps
+
+from greg.general import unzip
 
 
 class DictionaryTransformer(BaseEstimator, TransformerMixin):

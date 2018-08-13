@@ -1,6 +1,6 @@
 import operator as op
-
 import pandas as pd
+from joblib import Parallel, delayed
 
 
 def mapna(s: pd.Series, *args, **kwargs) -> pd.Series:
@@ -27,3 +27,7 @@ def standardize(x: pd.Series, center: bool=True, scale: bool=True, skipna: bool=
         x_scaled = x
 
     return x_scaled
+
+
+def group_apply_parallel(grouped_df, func, *args, **kwargs):
+    return pd.concat(Parallel(*args, **kwargs)(delayed(func)(group) for _, group in grouped_df))

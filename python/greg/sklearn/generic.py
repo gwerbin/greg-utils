@@ -1,21 +1,6 @@
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
-class FunctionTransformer(BaseEstimator, TransformerMixin):
-    """ Make a stateless transformer out of a function, i.e. one that doesn't need to be fit
-    
-    subtract10_transformer = FunctionTransformer('Subtract10Transformer', lambda x: x - 10)
-    """
-    def __init__(self, function):
-        self.function = function
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X, y=None):
-        return self.function(X)
-
-
 class EstimatorTransformer(BaseEstimator, TransformerMixin):
     """ Make a transformer out of a Scikit-learn "Estimator"
     

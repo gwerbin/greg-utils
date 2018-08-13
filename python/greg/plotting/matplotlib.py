@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+
 def plot_abline(intercept, slope, ax=None, *args, **kwargs):
     """ Plot a line given its slope and intercept """
     if ax:
@@ -17,3 +19,10 @@ def plot_abline(intercept, slope, ax=None, *args, **kwargs):
     y1 = min(y_max, intercept + slope * x1)
 
     plot([x0, x1], [y0, y1], *args, **kwargs)
+
+
+def sparse_hexbin(m, ax=None):
+    """ View a sparse matrix """
+    m_coo = sps.coo_matrix(m)
+    hexbin = ax.hexbin if ax is not None else plt.hexbin
+    return hexbin(m_coo.col, m_coo.row)

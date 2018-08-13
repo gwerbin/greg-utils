@@ -1,1 +1,6 @@
-boltons >= 18.0
+boltons
+cytoolz
+numpy
+pandas
+scikit-learn
+joblib
