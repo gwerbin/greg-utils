@@ -1,7 +1,7 @@
 import cytoolz as tz
 
 
-def make_ngrams(s, n, join=None)
+def make_ngrams(s, n, join=None):
     """ Make n-grams
     
     For character ngrams, s should be a string

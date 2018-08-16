@@ -1,3 +1,4 @@
+import scipy.sparse as sps
 import matplotlib.pyplot as plt
 
 def plot_abline(intercept, slope, ax=None, *args, **kwargs):

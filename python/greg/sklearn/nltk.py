@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
-class NltkTokenizerTransformer(BaseEstimator, TransformerMixin):
+class NltkTokenizer(BaseEstimator, TransformerMixin):
     """ Turn an NLTK tokenizer into a transformer
     
     nist_tokenizer_transformer = NltkTokenizerTransformer(NISTTokenizer)

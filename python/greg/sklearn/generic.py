@@ -4,9 +4,10 @@ from sklearn.base import BaseEstimator, TransformerMixin
 class EstimatorTransformer(BaseEstimator, TransformerMixin):
     """ Make a transformer out of a Scikit-learn "Estimator"
     
-    Useful for imputing values from an existing trained model.
+    Useful for imputing values from an intermediate model.
     
-    linear_regression_transformer = EstimatorTransformer('LinearRegressionTransformer', LinearRegression)
+    regression_imputer = EstimatorTransformer(LinearRegression, predict_proba=True)
+    probability_imputer = EstimatorTransformer(LogisticRegression, predict_proba=True)
     """
     def __init__(self, estimator, predict_proba=False):
         self.estimator = estimator
