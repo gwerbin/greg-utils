@@ -15,35 +15,43 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from greg.general import unzip
 
 
-def sparsebow2coo(sparse_docs):
+def sbow_itercoords(sparse_docs):
     for i, doc in enumerate(sparse_docs):
         for j, value in doc:
             yield i, j, value
 
 
-def sparsebow2array(bow_dictionary, sparse_docs, sparse=False, binarize=False):
+def sbow2array(sparse_docs, shape=None, sparse=False, binarize=False):
     """ Convert from Gensim "sparse bag-of-words" format to array
     
     Essential for transform methods in Gensim wrappers
     """
-    coords = sparsebow2coo(sparse_docs)
+    coords = sbow_itercoords(sparse_docs)
+
     if binarize:
         coords = ((i, j, float(value > 0)) for i, j, value in coords)
 
     i, j, values = unzip(coords)
 
-    shape = (max(i)+1, len(bow_dictionary))
+    if shape is None:
+        shape = max(i)+1, max(j)+1
+    else:
+        nrow, ncol = shape
+        if nrow is None or nrow < 0:
+            nrow = max(i)+1
+        if ncol is None or ncol < 0:
+            ncol = max(j)+1
 
     if sparse:
-        out = sps.coo_matrix((values, (i, j)), shape)
+        out = sps.coo_matrix((values, (i, j)), (nrow, ncol))
     else:
-        out = np.zeros(shape)
+        out = np.zeros((nrow, ncol))
         out[i, j] = values
 
     return out
 
 
-def array2sparsebow(array, zero_tol=1e-07):
+def array2sbow(array, zero_tol=1e-07):
     """ Convert from Gensim "sparse bag-of-words" format to array
     
     This isn't actually needed for wrapping Gensim
@@ -57,14 +65,6 @@ def array2sparsebow(array, zero_tol=1e-07):
         for row in array:
             yield tuple((j, value) for j, value in enumerate(row) if abs(value) < zero_tol)
 
-
-def bm25locals(termfreq, doclen, avgdoclen, k1=1.2, b=0.75):
-    # https://en.wikipedia.org/wiki/Okapi_BM25
-    return termfreq * (k1 + 1) / (termfreq + k1*(1-b + doclen/avgdoclen))
-
-def bm25global(docfreq, totaldocs):
-    # https://en.wikipedia.org/wiki/Okapi_BM25
-    return np.log(totaldocs - docfreq + 0.5) - np.log(docfreq + 0.5)
 
 def bm25pluslocals(termfreq, doclen, avgdoclen, k1=1.2, b=0.75, delta=1.0):
     # https://en.wikipedia.org/wiki/Okapi_BM25
@@ -84,11 +84,16 @@ class GensimTransformer(BaseEstimator, TransformerMixin, metaclass=ABCMeta):
         self.model_ = self._new_model(X)
         return self
 
+    @abstractmethod
     def transform(self, X):
-        return sparsebow2array(self.model_, self.model_[X])
+        pass
 
 
-class GensimCorpus(GensimTransformer, metaclass=ABCMeta):
+class GensimBaseDictionary(GensimTransformer, metaclass=ABCMeta):
+    @abstractmethod
+    def _new_model(self, X=None, y=None):
+        pass
+
     def partial_fit(self, X, y=None):
         if self.model_ is None:
             self.model_ = self._new_model(X)
@@ -96,43 +101,47 @@ class GensimCorpus(GensimTransformer, metaclass=ABCMeta):
             self.model_.add_documents(X)
         return self
 
-    @abstractmethod
-    def _new_model(self, X=None, y=None):
-        pass
-
     def fit(self, X, y=None):
         self.model_ = None
         return self.partial_fit(X, y)
 
     def transform(self, X, y=None):
-        return sparsebow2array(self.model_, map(self.model_.doc2bow, X), sparse=self.sparse_, binarize=self.binary)
+        if self.array_output:
+            return sbow2array(self.model_[X], (None, len(self.model_)), sparse=self.sparse_output, binarize=self.binarize)
+        else:
+            return self.model_[X]
 
 
-class GensimDictionary(GensimCorpus):
+class GensimDictionary(GensimBaseDictionary):
     """ Minimal Scikit-learn wrapper for gensim.corpora.Dictionary """
-    def __init__(self, binary=True, prune_at=2000000, sparse=True):
+    def __init__(self, prune_at=2000000, sparse=True, array_output=True, sparse_output=True, binarize=False):
         self.model_ = None
         self.binary = binary
         self.prune_at = prune_at
-        self.sparse_ = sparse
+        self.sparse = sparse
         self.binary = binary
+        self.array_output = array_output
+        self.sparse_output = sparse_output
+        self.binarize = binarize
 
     def _new_model(self, X=None, y=None):
         return Dictionary(X, prune_at=self.prune_at)
 
 
-class GensimHashDictionary(GensimCorpus):
+class GensimHashDictionary(GensimBaseDictionary):
     """ Minimal Scikit-learn wrapper for gensim.corpora.HashDictionary """
-    def __init__(self, binary=True, id_range=32000, myhash=zlib.adler32, debug=True, sparse=True):
+    def __init__(self, id_range=32000, myhash=zlib.adler32, debug=True, sparse=True, array_output=True, sparse_output=True, binarize=False):
         self.model_ = None
         self.id_range = id_range
         self.binary = binary
-        self.sparse_ = sparse
-        self.debug_ = debug
         self.myhash = myhash
+        self.debug = debug
+        self.array_output = array_output
+        self.sparse_output = sparse_output
+        self.binarize = binarize
 
     def _new_model(self, X=None, y=None):
-        return HashDictionary(id_range=self.id_range, myhash=self.myhash, debug=self.debug_)
+        return HashDictionary(id_range=self.id_range, myhash=self.myhash, debug=self.debug)
 
 
 class GensimNormalize(GensimTransformer):
@@ -144,36 +153,49 @@ class GensimNormalize(GensimTransformer):
     def _new_model(self, X=None, y=None):
         return NormModel(norm=self.norm)
 
-    def transform(self, X):
-        return sparsebow2array(self.model_, self.model_[X])
+    def transform(self, X=None, y=None):
+        # this one "knows what to do" with matrices, etc
+        return self.model_[X]
 
 
 class GensimTfidf(GensimTransformer):
     """ Minimal Scikit-learn wrapper for gensim.models.TfidfModel """
-    def __init__(self, wlocals=gensim.utils.identity, wglobal=df2idf, normalize=True, smartirs=None, pivot=None, slope=0.65):
+    def __init__(self, wlocal=gensim.utils.identity, wglobal=df2idf, normalize=True, smartirs=None, pivot=None, slope=0.65, array_output=True, sparse_output=True, id2word=None):
         self.model_ = None
-        self.wlocals = wlocals
+        self.wlocal = wlocal
         self.wglobal = wglobal
         self.normalize = normalize
         self.smartirs = smartirs
         self.pivot = pivot
         self.slope = slope
+        self.array_output = array_output
+        self.sparse_output = sparse_output
+        self.id2word = id2word
 
     def _new_model(self, X=None, y=None):
-        return TfidfModel(X, wlocals=self.wlocals, wglobal=self.wglobal, normalize=self.normalize,
-                          smartirs=self.smartirs, pivot=self.pivot, slope=self.slope)
+        return TfidfModel(X, wlocal=self.wlocal, wglobal=self.wglobal, normalize=self.normalize,
+                          smartirs=self.smartirs, pivot=self.pivot, slope=self.slope, id2word=self.id2word)
+
+    def transform(self, X=None, y=None):
+        if self.array_output:
+            model = self.model_
+            if model.id2word is not None:
+                ncol = len(model.id2word)
+            else:
+                ncol = None
+            return sbow2array(model[X], (None, ncol), sparse=self.sparse_output)
+        else:
+            return self.model_[X]
 
 
-class GensimBm25(GensimTfidf):
-    """ Minimal Scikit-learn wrapper for gensim.models.TfidfModel, with BM25 settings """
-    def __init__(self, wlocals=bm25locals, wglobal=bm25global, normalize=True, smartirs=None, pivot=None, slope=0.65):
-        super().__init__(wlocals=wlocals, wglobal=wglobal, normalize=normalize, smartirs=smartirs, pivot=pivot, slope=slope)
+def bm25locals(termfreq, doclen, avgdoclen, k1=1.2, b=0.75):
+    # https://en.wikipedia.org/wiki/Okapi_BM25
+    return termfreq * (k1 + 1) / (termfreq + k1*(1-b + doclen/avgdoclen))
 
 
-class GensimBm25Plus(GensimTfidf):
-    """ Minimal Scikit-learn wrapper for gensim.models.TfidfModel, with BM25+ settings """
-    def __init__(self, wlocals=bm25pluslocals, wglobal=bm25global, normalize=True, smartirs=None, pivot=None, slope=0.65):
-        super().__init__(wlocals=wlocals, wglobal=wglobal, normalize=normalize, smartirs=smartirs, pivot=pivot, slope=slope)
+def bm25global(docfreq, totaldocs):
+    # https://en.wikipedia.org/wiki/Okapi_BM25
+    return np.log(totaldocs - docfreq + 0.5) - np.log(docfreq + 0.5)
 
 
 class GensimLogEntropy(GensimTransformer):
@@ -181,23 +203,31 @@ class GensimLogEntropy(GensimTransformer):
     
     A special case of TF-IDF with "log+1" local weight and entropy global weight
     """
-    def __init__(self, normalize=True):
+    def __init__(self, normalize=True, array_output=True, sparse_output=False):
         self.model_ = None
         self.normalize = True
+        self.array_output = array_output
+        self.sparse_output = sparse_output
 
     def _new_model(self, X=None, y=None):
         return LogEntropyModel(X, normalize=self.normalize)
+
+    def transform(self, X=None, y=None):
+        if self.array_output:
+            return sbow2array(self.model_[X], (None, len(self.model_.entr)+1), sparse=self.sparse_output)
+        else:
+            return self.model_[X]
 
 
 class GensimLda(GensimTransformer):
     """ Minimal Scikit-learn wrapper for gensim.models.LdaModel """
     def __init__(self, num_topics=100, chunksize=2000, passes=1, update_every=1, alpha='symmetric', eta=None, decay=0.5, offset=1.0,
                  eval_every=10, iterations=50, gamma_threshold=0.001, minimum_probability=0.01, ns_conf=None, minimum_phi_value=0.01,
-                 callbacks=None, dtype=np.dtype('float32'), n_workers=1, random_state=None):
+                 callbacks=None, dtype=np.dtype('float32'), n_workers=1, random_state=None, array_output=True, sparse_output=True, id2word=None):
         self.model_ = None
-        self.callbacks_ = callbacks
-        self.dtype_ = dtype
-        self.random_state_ = random_state
+        self.callbacks = callbacks
+        self.dtype = dtype
+        self.random_state = random_state
         self.n_workers = n_workers
         self.num_topics = num_topics
         self.chunksize = chunksize
@@ -213,29 +243,48 @@ class GensimLda(GensimTransformer):
         self.minimum_probability = minimum_probability
         self.ns_conf = ns_conf
         self.minimum_phi_value = minimum_phi_value
+        self.array_output = array_output
+        self.sparse_output = sparse_output
+        self.id2word = id2word
 
     def _new_model(self, X=None, y=None):
         if self.n_workers < 1:
             return LdaModel(X, num_topics=self.num_topics, chunksize=self.chunksize, passes=self.passes, batch=self.batch,
                             alpha=self.alpha, eta=self.eta, decay=self.decay, offset=self.offset, eval_every=self.eval_every, iterations=self.iterations, gamma_threshold=self.gamma_threshold,
                             minimum_probability=self.minimum_probability, minimum_phi_value=self.minimum_phi_value, per_word_topics=self.per_word_topics,
-                            random_state=self.random_state_, callbacks=self.self.callbacks_, dtype=self.dtype_)
+                            random_state=self.random_state, callbacks=self.self.callbacks, dtype=self.dtype)
         else:
             return LdaMulticore(X, num_topics=self.num_topics, chunksize=self.chunksize, passes=self.passes, batch=self.batch,
                             alpha=self.alpha, eta=self.eta, decay=self.decay, offset=self.offset, eval_every=self.eval_every, iterations=self.iterations, gamma_threshold=self.gamma_threshold,
                             minimum_probability=self.minimum_probability, minimum_phi_value=self.minimum_phi_value, per_word_topics=self.per_word_topics,
-                            random_state=self.random_state_, callbacks=self.self.callbacks_, dtype=self.dtype_, workers=self.n_workers_)
+                            random_state=self.random_state, callbacks=self.self.callbacks, dtype=self.dtype)
 
     def partial_fit(self, X, y=None, chunks_as_numpy=False):
         if self.model_ is None:
-            self.model_ = self._new_model(self, X, y=None)
-        self.model_.update(X, chunks_as_numpy=chunks_as_numpy)
+            self.model_ = self._new_model(X, y)
+        else:
+            self.model_.update(X, chunks_as_numpy=chunks_as_numpy)
         return self
+
+    def fit(self, X, y=None):
+        self.model_ = self._new_model(X, y)
+        return self
+
+    def transform(self, X=None, y=None):
+        if self.array_output:
+            model = self.model_
+            if model.id2word is not None:
+                ncol = len(model.id2word)
+            else:
+                ncol = None
+            return sbow2array(model[X], (None, ncol), sparse=self.sparse_output)
+        else:
+            return self.model_[X]
 
 
 class GensimHdp(GensimTransformer):
     """ Minimal Scikit-learn wrapper for gensim.models.HdpModel """
-    def __init__(self, max_chunks=None, max_time=None, chunksize=256, kappa=1.0, tau=64.0, K=15, T=150, alpha=1, gamma=1, eta=0.01, scale=1.0, var_converge=0.0001, outputdir=None, random_state=None):
+    def __init__(self, max_chunks=None, max_time=None, chunksize=256, kappa=1.0, tau=64.0, K=15, T=150, alpha=1, gamma=1, eta=0.01, scale=1.0, var_converge=0.0001, outputdir=None, random_state=None, array_output=True, sparse_output=False):
         self.model_ = None
         self.max_chunks = max_chunks
         self.max_time = max_time
@@ -250,11 +299,13 @@ class GensimHdp(GensimTransformer):
         self.scale = scale
         self.var_converge = var_converge
         self.outputdir_ = outputdir
-        self.random_state_ = None
+        self.random_state = None
+        self.array_output = array_output
+        self.sparse_output = sparse_output
 
     def _new_model(self, X=None, y=None):
         return HdpModel(X, max_chunks=self.max_chunks, max_time=self.max_time, chunksize=self.chunksize, kappa=self.kappa, tau=self.tau, K=self.K, T=self.T,
-                        alpha=self.alpha, gamma=self.gamma, eta=self.eta, scale=self.scale, var_converge=self.var_converge, outputdir=self.outputdir_, random_state=self.random_state_)
+                        alpha=self.alpha, gamma=self.gamma, eta=self.eta, scale=self.scale, var_converge=self.var_converge, outputdir=self.outputdir, random_state=self.random_state)
 
     def partial_fit(self, X, y=None, update=True, opt_o=True):
         if self.model_ is None:
@@ -262,12 +313,27 @@ class GensimHdp(GensimTransformer):
         self.model_.update_chunk(X, update=update, opt_o=opt_o)
         return self
 
+    def fit(self, X, y=None):
+        self.model_ = self._new_model(X, y)
+        return self
+
+    def transform(self, X=None, y=None):
+        if self.array_output:
+            model = self.model_
+            if model.id2word is not None:
+                ncol = len(model.id2word)
+            else:
+                ncol = None
+            return sbow2array(model[X], (None, ncol), sparse=self.sparse_output)
+        else:
+            return self.model_[X]
+
 
 class GensimFastText(GensimTransformer):
     """ Minimal Scikit-learn wrapper for gensim.models.FastText """
     def __init__(self, sg=0, hs=0, size=100, alpha=0.025, window=5, min_count=5, max_vocab_size=None, word_ngrams=1, sample=0.001, seed=1,
                  workers=3, min_alpha=0.0001, negative=5, ns_exponent=0.75, cbow_mean=1, hashfxn=hash, iter=5, null_word=0, min_n=3, max_n=6, sorted_vocab=1,
-                 bucket=2000000, trim_rule=None, batch_words=10000, callbacks=()):
+                 bucket=2000000, trim_rule=None, batch_words=10000, callbacks=(), array_output=True):
         self.model_ = None
         self.n_workers_ = n_workers
         self.seed_ = seed
@@ -294,6 +360,7 @@ class GensimFastText(GensimTransformer):
         self.bucket = bucket
         self.trim_rule = trim_rule
         self.batch_words = batch_words
+        self.array_output=array_output
 
     def _new_model(self, X=None, y=None):
         return FastText(X, sg=self.sg, hs=self.hs, size=self.size, alpha=self.alpha, window=self.window, min_count=self.min_count, max_vocab_size=self.max_vocab_size, word_ngrams=self.word_ngrams, sample=self.sample,
@@ -301,5 +368,17 @@ class GensimFastText(GensimTransformer):
                         max_n=self.max_n, sorted_vocab=self.sorted_vocab, bucket=self.self.self.bucket, trim_rule=self.trim_rule, batch_words=self.batch_words,
                         callbacks=self.callbacks_, seed=self.seed_, workers=self.n_workers_)
 
-    def transform(self, X):
-        return sparsebow2array(self.model_, self.model_.wv[X])
+    def fit(self, X, y=None):
+        self.model_ = self._new_model(X, y)
+        return self
+
+    def transform(self, X=None, y=None):
+        if self.array_output:
+            model = self.model_
+            if model.vocabulary is not None:
+                ncol = len(model.vocabulary)
+            else:
+                ncol = None
+            return sbow2array(model.wv[X], (None, ncol), sparse=self.sparse_output)
+        else:
+            return self.model_.wv[X]

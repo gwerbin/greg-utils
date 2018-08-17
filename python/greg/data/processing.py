@@ -1,7 +1,7 @@
 import cytoolz as tz
 
 
-def make_ngrams(s, n, join=None):
+def make_ngrams(s, n, joiner=None):
     """ Make n-grams
     
     For character ngrams, s should be a string
@@ -9,10 +9,16 @@ def make_ngrams(s, n, join=None):
 
     sep='' is recommended for characters, and sep='_' for words.
     """
-    ngrams = tz.sliding_window(n, s)
-    if join is not None:
-        ngrams = (sep.join(grams) for grams in ngrams)
-    return ngrams
+    try:
+        ngrams = tz.sliding_window(n, s)
+    except StopIteration:
+        # bug in toolz/cytoolz?
+        yield from ()
+
+    if joiner is not None:
+        ngrams = (joiner.join(grams) for grams in ngrams)
+
+    yield from ngrams
 
 
 def jaccard_sim(a, b):
