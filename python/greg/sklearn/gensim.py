@@ -106,10 +106,11 @@ class GensimBaseDictionary(GensimTransformer, metaclass=ABCMeta):
         return self.partial_fit(X, y)
 
     def transform(self, X, y=None):
+        sbow = (self.model_.doc2bow(doc) for doc in X)
         if self.array_output:
-            return sbow2array(self.model_[X], (None, len(self.model_)), sparse=self.sparse_output, binarize=self.binarize)
+            return sbow2array(sbow, (None, len(self.model_)), sparse=self.sparse_output, binarize=self.binarize)
         else:
-            return self.model_[X]
+            return sbow
 
 
 class GensimDictionary(GensimBaseDictionary):
@@ -133,7 +134,6 @@ class GensimHashDictionary(GensimBaseDictionary):
     def __init__(self, id_range=32000, myhash=zlib.adler32, debug=True, sparse=True, array_output=True, sparse_output=True, binarize=False):
         self.model_ = None
         self.id_range = id_range
-        self.binary = binary
         self.myhash = myhash
         self.debug = debug
         self.array_output = array_output
@@ -160,7 +160,7 @@ class GensimNormalize(GensimTransformer):
 
 class GensimTfidf(GensimTransformer):
     """ Minimal Scikit-learn wrapper for gensim.models.TfidfModel """
-    def __init__(self, wlocal=gensim.utils.identity, wglobal=df2idf, normalize=True, smartirs=None, pivot=None, slope=0.65, array_output=True, sparse_output=True, id2word=None):
+    def __init__(self, wlocal=gensim.utils.identity, wglobal=df2idf, normalize=True, smartirs=None, pivot=None, slope=0.65, array_output=True, sparse_output=True, id2word=None, vocab_size=None):
         self.model_ = None
         self.wlocal = wlocal
         self.wglobal = wglobal
@@ -171,6 +171,7 @@ class GensimTfidf(GensimTransformer):
         self.array_output = array_output
         self.sparse_output = sparse_output
         self.id2word = id2word
+        self.vocab_size = vocab_size
 
     def _new_model(self, X=None, y=None):
         return TfidfModel(X, wlocal=self.wlocal, wglobal=self.wglobal, normalize=self.normalize,
@@ -181,6 +182,8 @@ class GensimTfidf(GensimTransformer):
             model = self.model_
             if model.id2word is not None:
                 ncol = len(model.id2word)
+            elif self.vocab_size is not None:
+                ncol = self.vocab_size
             else:
                 ncol = None
             return sbow2array(model[X], (None, ncol), sparse=self.sparse_output)

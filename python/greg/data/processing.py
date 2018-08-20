@@ -7,7 +7,7 @@ def make_ngrams(s, n, joiner=None):
     For character ngrams, s should be a string
     For token/word ngrams, s should be a sequence of tokens
 
-    sep='' is recommended for characters, and sep='_' for words.
+    joiner='' is recommended for characters, and joiner='_' for words.
     """
     try:
         ngrams = tz.sliding_window(n, s)
